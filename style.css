@@ -1,0 +1,43 @@
+/* Reset default browser margins */
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #111; /* Dark theme */
+    color: #ccc;
+    font-family: 'Courier New', Courier, monospace; /* Techy font */
+    
+    /* Centering Magic */
+    display: flex;
+    flex-direction: column; /* Stack text above canvas */
+    justify-content: center; /* Center vertical */
+    align-items: center;     /* Center horizontal */
+    
+    /* Ensure body takes up full screen height */
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden; /* Prevent scrollbars if canvas is large */
+}
+
+/* The Simulation Canvas */
+canvas {
+    border: 1px solid #333; /* Subtle border */
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.8); /* Glow effect */
+    cursor: crosshair;
+    
+    /* Ensure canvas doesn't stretch weirdly */
+    display: block;
+}
+
+/* Instructions Text */
+#instructions {
+    margin-bottom: 15px; /* Space between text and canvas */
+    text-transform: uppercase;
+    font-size: 14px;
+    letter-spacing: 1px;
+    opacity: 0.7;
+    pointer-events: none; /* Let clicks pass through if text overlaps */
+}
