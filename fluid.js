@@ -10,15 +10,15 @@ class Fluid {
         // to keep the code matching Day 2's logic.
         this.size = (N + 2) * (N + 2);
 
-        // Arrays
-        this.s = new Float32Array(this.size);
-        this.density = new Float32Array(this.size);
+        // The "Now" arrays
+        this.Vx = new Float32Array(this.size); // Velocity X
+        this.Vy = new Float32Array(this.size); // Velocity Y
+        this.density = new Float32Array(this.size); // Smoke
         
-        this.Vx = new Float32Array(this.size);
-        this.Vy = new Float32Array(this.size);
-        
+        // The "Previous" arrays (Buffer)
         this.Vx0 = new Float32Array(this.size);
         this.Vy0 = new Float32Array(this.size);
+        this.s = new Float32Array(this.size); // Previous density
     }
 
     // --- PUBLIC METHODS ---
@@ -34,18 +34,21 @@ class Fluid {
         let s       = this.s;
         let density = this.density;
 
-        diffuse(1, Vx0, Vx, visc, dt);
+        // Phase 1: Velocity step
+        diffuse(1, Vx0, Vx, visc, dt); // Wind spreads out
         diffuse(2, Vy0, Vy, visc, dt);
 
-        project(Vx0, Vy0, Vx, Vy);
+        project(Vx0, Vy0, Vx, Vy);  // Fix the wind (swirl)
 
-        advect(1, Vx, Vx0, Vx0, Vy0, dt);
+        advect(1, Vx, Vx0, Vx0, Vy0, dt); // Move the wind via wind
         advect(2, Vy, Vy0, Vx0, Vy0, dt);
 
-        project(Vx, Vy, Vx0, Vy0);
+        project(Vx, Vy, Vx0, Vy0); // Fix the wind again
 
-        diffuse(0, s, density, diff, dt);
-        advect(0, density, s, Vx, Vy, dt);
+        // Phase 2: Density step
+
+        diffuse(0, s, density, diff, dt);  // Smoke spreads out
+        advect(0, density, s, Vx, Vy, dt); // Move smoke via wind
     }
 
     addDensity(x, y, amount) {
@@ -70,7 +73,7 @@ function IX(x, y) {
     return x + (N + 2) * y;
 }
 
-function advect(b, d, d0, velocX, velocY, dt) {
+function advect(b, d, d0, velocX, velocY, dt) { // predict cell density via backward trace of flow
     let i0, i1, j0, j1;
 
     let dtx = dt * (N - 2);
@@ -117,7 +120,7 @@ function advect(b, d, d0, velocX, velocY, dt) {
     set_bnd(b, d);
 }
 
-function project(velocX, velocY, p, div) {
+function project(velocX, velocY, p, div) { // enforces incompressibliilty for swirl
     for (let j = 1; j < N - 1; j++) {
         for (let i = 1; i < N - 1; i++) {
             div[IX(i, j)] = -0.5 * (
@@ -146,7 +149,7 @@ function diffuse(b, x, x0, diff, dt) {
     lin_solve(b, x, x0, a, 1 + 6 * a);
 }
 
-function lin_solve(b, x, x0, a, c) {
+function lin_solve(b, x, x0, a, c) { // the value of a cell is the average of it's 4 neighbours
     let cRecip = 1.0 / c;
     for (let k = 0; k < iter; k++) {
         for (let j = 1; j < N - 1; j++) {
@@ -165,7 +168,7 @@ function lin_solve(b, x, x0, a, c) {
     }
 }
 
-function set_bnd(b, x) {
+function set_bnd(b, x) { // keeps the fluid inside the box
     for (let i = 1; i < N - 1; i++) {
         x[IX(i, 0)] = b == 2 ? -x[IX(i, 1)] : x[IX(i, 1)];
         x[IX(i, N - 1)] = b == 2 ? -x[IX(i, N - 2)] : x[IX(i, N - 2)];
@@ -180,3 +183,4 @@ function set_bnd(b, x) {
     x[IX(N - 1, 0)] = 0.5 * (x[IX(N - 2, 0)] + x[IX(N - 1, 1)]);
     x[IX(N - 1, N - 1)] = 0.5 * (x[IX(N - 2, N - 1)] + x[IX(N - 1, N - 2)]);
 }
+
