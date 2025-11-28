@@ -19,17 +19,19 @@ let settings = {
     cooling: 0.99,
     turbulence: 0.5,
     
+    // Interaction
+    brushSize: 3,
+    
     // Modes
     fireMode: false,
     
     // Visuals
-    color: [200, 255, 255],
-    showVelocity: false, // <--- NEW TOGGLE
+    color: [200, 100, 255], // Changed to RGB format [R, G, B]
+    showVelocity: false,
     vectorScale: 10,
     
     clear: function() {
         fluid = new Fluid(0.2, 0, 0.0000001);
-        updateSimulationMode();
     }
 };
 
@@ -39,54 +41,67 @@ function setup() {
     noStroke();
     frameRate(60);
     
-    colorMode(HSB, 360, 100, 100, 1);
+    // REMOVED HSB MODE - keep it in default RGB for dat.GUI compatibility
+    // colorMode(HSB, 360, 100, 100);
 
     fluid = new Fluid(0.2, settings.diffusion, settings.viscosity);
-
-    // Create an empty image the same size as the simulation grid
     fluidImg = createImage(N, N); 
 
     // --- GUI ---
     let gui = new dat.GUI();
     
+    // 1. Behavior Folder
     let f1 = gui.addFolder('Behavior');
-    f1.add(settings, 'fireMode').name("Rafeh On Fire Mode").onChange(updateSimulationMode);
-    f1.add(settings, 'buoyancy', 0, 0.05).name("Buoyancy").listen();
-    f1.add(settings, 'cooling', 0.90, 1.0).name("Cooling").listen();
-    f1.add(settings, 'turbulence', 0, 2.0).name("Wind/Chaos");
+    f1.add(settings, 'fireMode').name("🔥 Fire Mode").onChange(updateSimulationMode);
     
-    let f2 = gui.addFolder('Visuals');
-    f2.addColor(settings, 'color').name("Fluid Color");
-    f2.add(settings, 'showVelocity').name("Show Vectors");
-    f2.add(settings, 'vectorScale', 0, 50).name("Arrow Size"); 
+    f1.add(settings, 'buoyancy', 0, 0.10).name("Buoyancy").listen(); 
+    f1.add(settings, 'cooling', 0.80, 1.0).name("Cooling").listen();
+    f1.add(settings, 'turbulence', 0, 2.0).name("Wind/Chaos");
+    f1.open();
+
+    // 2. Interaction Folder
+    let f2 = gui.addFolder('Interaction');
+    f2.add(settings, 'dyeAmount', 100, 1000).name("Ink Amount");
+    f2.add(settings, 'brushSize', 1, 10).name("Brush Size").step(1);
+    f2.add(settings, 'force', 0.1, 3.0).name("Mouse Force");
     f2.open();
 
+    // 3. Visuals Folder
+    let f3 = gui.addFolder('Visuals');
+    f3.addColor(settings, 'color').name("Fluid Color");
+    f3.add(settings, 'showVelocity').name("Show Vectors");
+    f3.add(settings, 'vectorScale', 0, 100).name("Arrow Size").listen(); 
+    
     gui.add(settings, 'clear').name("Reset Fluid");
 }
 
 function updateSimulationMode() {
     if (settings.fireMode) {
-        settings.buoyancy = 0.04;
-        settings.cooling = 0.99;
-        settings.vectorScale = 10; // Fire is fast, keep arrows normal
+        // FIRE PRESET
+        settings.buoyancy = 0.08;
+        settings.cooling = 0.90;
+        settings.vectorScale = 10;
+        settings.turbulence = 1.0;
     } else {
+        // FLUID PRESET
         settings.buoyancy = 0.0;
         settings.cooling = 0.99;
-        settings.vectorScale = 50; // Fluid is slow, magnify arrows x5
+        settings.vectorScale = 50;
+        settings.turbulence = 0.0; // Fixed: was 0.5, should be 0.0 for fluid mode
     }
 }
 
 function draw() {
     background(0);
 
-    // 1. UPDATE ENGINE
+    // 1. SYNC SETTINGS TO ENGINE
     fluid.visc = settings.viscosity;
     fluid.diff = settings.diffusion;
     fluid.buoyancy = settings.buoyancy;
     fluid.cooling = settings.cooling;
 
     // 2. FIRE TURBULENCE
-    if (settings.fireMode) {
+    if (settings.turbulence > 0) {
         addFireTurbulence();
     }
 
@@ -95,62 +110,54 @@ function draw() {
     fluid.step();
 
     // 4. RENDER FLUID
-    noStroke(); // Ensure no borders on fluid pixels
     renderFluid();
 
-    // 5. RENDER VECTORS (Overlay)
+    // 5. RENDER VECTORS
     if (settings.showVelocity) {
         renderVelocityVectors();
     }
     
-    // Debug FPS
     fill(255);
-    noStroke();
     text("FPS: " + floor(frameRate()), 10, 20);
 }
 
-function renderVelocityVectors() {
-    let step = 8; // Grid step (draw an arrow every 8 pixels)
-    
-    stroke(255, 150); // White with transparency
-    strokeWeight(1);
-    noFill();
+function handleMouse() {
+    if (mouseIsPressed) {
+        let centerX = floor(mouseX / SCALE);
+        let centerY = floor(mouseY / SCALE);
+        
+        let radius = settings.brushSize;
 
-    for (let i = 0; i < N; i += step) {
-        for (let j = 0; j < N; j += step) {
-            
-            let x = i * SCALE;
-            let y = j * SCALE;
+        for (let i = -radius; i <= radius; i++) {
+            for (let j = -radius; j <= radius; j++) {
+                let x = centerX + i;
+                let y = centerY + j;
 
-            let index = IX(i, j);
-            let vx = fluid.Vx[index];
-            let vy = fluid.Vy[index];
+                if (x > 0 && x < N - 1 && y > 0 && y < N - 1) {
+                    if (i*i + j*j <= radius*radius) {
+                        
+                        let noiseAmt = random(0.5, 1.5);
+                        
+                        // A. Add Visuals (Dye)
+                        fluid.addDensity(x, y, settings.dyeAmount * noiseAmt);
+                        
+                        // B. Add Physics (Heat)
+                        if (settings.buoyancy > 0) {
+                            fluid.addTemperature(x, y, 50 * noiseAmt);
+                        }
 
-            // Calculate the velocity magnitude (speed)
-            // We use p5's dist() function or just manual math
-            let len = Math.sqrt(vx * vx + vy * vy) * settings.vectorScale;
+                        // C. Add Motion (Velocity)
+                        let amtX = movedX * settings.force;
+                        let amtY = movedY * settings.force;
+                        
+                        if (settings.buoyancy > 0) {
+                            let wiggle = random(-1, 1);
+                            fluid.addVelocity(x, y, wiggle, -1);
+                        }
 
-            // Only draw if the arrow is big enough to see (removes noise)
-            if (len > 0.5) {
-                // Limit max length so arrows don't overlap too much
-                len = constrain(len, 2, SCALE * step);
-
-                // Calculate angle of the wind
-                let angle = atan2(vy, vx);
-
-                push(); // 1. Save current drawing state
-                translate(x, y); // 2. Move origin to the cell center
-                rotate(angle);   // 3. Rotate the "paper" to match wind dir
-                
-                // 4. Draw the arrow shaft (Always straight along X axis now)
-                line(0, 0, len, 0);
-                
-                // 5. Draw the arrow head (Two little lines at the tip)
-                let arrowSize = 3;
-                line(len, 0, len - arrowSize, -arrowSize);
-                line(len, 0, len - arrowSize, arrowSize);
-                
-                pop(); // 6. Restore drawing state for next loop
+                        fluid.addVelocity(x, y, amtX, amtY);
+                    }
+                }
             }
         }
     }
@@ -161,7 +168,7 @@ function addFireTurbulence() {
     for (let j = 1; j < N - 1; j++) {
         for (let i = 1; i < N - 1; i++) {
             let index = IX(i, j);
-            if (fluid.density[index] > 5) {
+            if (fluid.density[index] > 10) {
                 let noiseVal = (noise(i * 0.1, j * 0.1, t) - 0.5); 
                 fluid.Vx[index] += noiseVal * settings.turbulence;
             }
@@ -170,93 +177,77 @@ function addFireTurbulence() {
 }
 
 function renderFluid() {
-    // 1. Prepare the buffer
     fluidImg.loadPixels();
     
+    // FIXED: dat.GUI returns RGB array [r, g, b], use directly
+    let rBase = settings.color[0];
+    let gBase = settings.color[1];
+    let bBase = settings.color[2];
+
     for (let i = 0; i < N; i++) {
         for (let j = 0; j < N; j++) {
-            
-            // Get density
             let d = fluid.density[IX(i, j)];
-            
-            // Pixel index in the image buffer
-            // (p5.js images use a 1D array: [R, G, B, A, R, G, B, A...])
             let index = 4 * (i + j * N);
             
-            if (d > 5) { // Only draw if visible
-                let r, g, b;
-                
+            if (d > 5) {
                 if (settings.fireMode) {
-                    // --- FIRE MODE (Manual RGB mixing for speed) ---
-                    // Density determines color: White -> Yellow -> Red -> Dark
+                    // --- FIRE MODE ---
+                    let r, g, b;
+                    if (d > 200) { r=255; g=255; b=(d-200)*5; } 
+                    else if (d > 100) { r=255; g=(d-100)*2.5; b=0; } 
+                    else { r=d*2.5; g=d*0.5; b=0; } 
                     
-                    let bright = constrain(d, 0, 255);
-                    
-                    if (d > 200) {
-                        // Core (White to Yellow)
-                        r = 255; 
-                        g = 255; 
-                        b = (d - 200) * 5; // Blue tint adds whiteness
-                    } else if (d > 100) {
-                        // Mid (Yellow to Orange)
-                        r = 255;
-                        g = (d - 100) * 2.5; 
-                        b = 0;
-                    } else {
-                        // Outer (Orange to Red)
-                        r = d * 2.5; 
-                        g = d * 0.5;
-                        b = 0;
-                    }
-                    
-                    // Set pixels
-                    fluidImg.pixels[index] = r;     // Red
-                    fluidImg.pixels[index + 1] = g; // Green
-                    fluidImg.pixels[index + 2] = b; // Blue
-                    fluidImg.pixels[index + 3] = 255; // Alpha (Fully Opaque)
+                    fluidImg.pixels[index] = r;
+                    fluidImg.pixels[index + 1] = g;
+                    fluidImg.pixels[index + 2] = b;
+                    fluidImg.pixels[index + 3] = 255;
                     
                 } else {
-                    // --- FLUID MODE ---
-                    // Use a simple blue gradient based on density
+                    // --- FLUID MODE (User Color) ---
+                    // Use RGB values directly from dat.GUI
+                    fluidImg.pixels[index]     = rBase;
+                    fluidImg.pixels[index + 1] = gBase;
+                    fluidImg.pixels[index + 2] = bBase;
                     
-                    // Note: We are manually doing HSB->RGB approximate here for speed
-                    // Blue-ish color
-                    fluidImg.pixels[index] = 0;       // Red
-                    fluidImg.pixels[index + 1] = d;   // Green (adds cyan/teal feel)
-                    fluidImg.pixels[index + 2] = d * 2; // Blue (Strongest)
-                    fluidImg.pixels[index + 3] = 255; // Alpha
+                    // Alpha mapping
+                    fluidImg.pixels[index + 3] = constrain(d * 3, 0, 255); 
                 }
             } else {
-                // Transparent if empty (Important!)
-                fluidImg.pixels[index + 3] = 0; 
+                fluidImg.pixels[index + 3] = 0;
             }
         }
     }
-    
-    // 2. Update and Draw
     fluidImg.updatePixels();
-    
-    // Draw the tiny image stretched to fill the canvas
-    // The browser automatically smooths the pixels!
     image(fluidImg, 0, 0, width, height);
 }
 
-function handleMouse() {
-    if (mouseIsPressed) {
-        let x = floor(mouseX / SCALE);
-        let y = floor(mouseY / SCALE);
-        let noiseAmt = random(0.8, 1.2); 
-        fluid.addDensity(x, y, settings.dyeAmount * noiseAmt);
-        
-        let amtX = movedX * settings.force;
-        let amtY = movedY * settings.force;
-        
-        if (settings.fireMode) {
-             let wiggle = random(-1, 1);
-             fluid.addVelocity(x, y, wiggle, -3); 
+function renderVelocityVectors() {
+    let step = 10;
+    stroke(255, 150);
+    strokeWeight(1);
+    noFill();
+    for (let i = 0; i < N; i += step) {
+        for (let j = 0; j < N; j += step) {
+            let x = i * SCALE;
+            let y = j * SCALE;
+            let index = IX(i, j);
+            let vx = fluid.Vx[index];
+            let vy = fluid.Vy[index];
+            let len = Math.sqrt(vx*vx + vy*vy) * settings.vectorScale;
+            
+            if (len > 1) {
+                len = constrain(len, 2, 40);
+                let angle = atan2(vy, vx);
+                push();
+                translate(x, y);
+                rotate(angle);
+                line(0, 0, len, 0);
+                let arrowSize = 3;
+                line(len, 0, len - arrowSize, -arrowSize);
+                line(len, 0, len - arrowSize, arrowSize);
+                pop();
+            }
         }
-        
-        fluid.addVelocity(x, y, amtX, amtY);
     }
 }
 

@@ -4,24 +4,27 @@ class Fluid {
         this.diff = diffusion;
         this.visc = viscosity;
         
-        // --- NEW CONFIGURATION PROPERTIES ---
-        this.buoyancy = 0.0; // Upward force strength (0 = none)
-        this.cooling = 0.99; // Density retention (1.0 = forever, 0.9 = fades fast)
+        // --- CONFIGURATION PROPERTIES ---
+        this.buoyancy = 0.0; 
+        this.cooling = 0.99; 
         
         this.size = (N + 2) * (N + 2);
 
-        // Arrays
+        // 1. DENSITY (The Ink/Smoke)
         this.s = new Float32Array(this.size);
         this.density = new Float32Array(this.size);
         
+        // 2. TEMPERATURE (The Heat) <--- NEW
+        this.t0 = new Float32Array(this.size);
+        this.t = new Float32Array(this.size);
+        
+        // 3. VELOCITY (The Wind)
         this.Vx = new Float32Array(this.size);
         this.Vy = new Float32Array(this.size);
-        
         this.Vx0 = new Float32Array(this.size);
         this.Vy0 = new Float32Array(this.size);
     }
 
-    // --- MAIN SIMULATION LOOP ---
     step() {
         let visc = this.visc;
         let diff = this.diff;
@@ -32,28 +35,32 @@ class Fluid {
         let Vy0  = this.Vy0;
         let s    = this.s;
         let density = this.density;
+        let t    = this.t;    // <--- NEW
+        let t0   = this.t0;   // <--- NEW
 
-        // 1. APPLY EXTERNAL FORCES (Buoyancy)
+        // A. SOLVE TEMPERATURE (Heat spreads and moves)
+        // Heat diffuses slightly faster than smoke usually, but we use same 'diff' for simplicity
+        diffuse(0, t0, t, diff, dt);
+        advect(0, t, t0, Vx, Vy, dt);
+
+        // B. APPLY FORCES (Buoyancy based on Temp)
         if (this.buoyancy > 0) {
             this.applyBuoyancy();
         }
 
-        // 2. VELOCITY SOLVER
+        // C. SOLVE VELOCITY
         diffuse(1, Vx0, Vx, visc, dt);
         diffuse(2, Vy0, Vy, visc, dt);
-
         project(Vx0, Vy0, Vx, Vy);
-
         advect(1, Vx, Vx0, Vx0, Vy0, dt);
         advect(2, Vy, Vy0, Vx0, Vy0, dt);
-
         project(Vx, Vy, Vx0, Vy0);
 
-        // 3. DENSITY SOLVER
+        // D. SOLVE DENSITY
         diffuse(0, s, density, diff, dt);
         advect(0, density, s, Vx, Vy, dt);
         
-        // 4. APPLY COOLING (Decay)
+        // E. COOLING & DECAY
         this.decay();
     }
 
@@ -63,6 +70,12 @@ class Fluid {
         let index = IX(x, y);
         this.density[index] += amount;
     }
+    
+    // NEW: Add Heat
+    addTemperature(x, y, amount) {
+        let index = IX(x, y);
+        this.t[index] += amount;
+    }
 
     addVelocity(x, y, amountX, amountY) {
         let index = IX(x, y);
@@ -70,48 +83,43 @@ class Fluid {
         this.Vy[index] += amountY;
     }
 
-    // INTERNAL: Simulates heat rising
+    // UPDATED: Simulates heat rising based on TEMPERATURE
     applyBuoyancy() {
-        // We iterate through the grid. If a cell has density (heat),
-        // we exert an UPWARD force on the velocity.
-        // "Up" is Negative Y in computer graphics.
         for (let i = 0; i < this.size; i++) {
-            let d = this.density[i];
-            if (d > 0) {
-                // Force is proportional to density * buoyancyFactor
-                this.Vy[i] -= d * this.buoyancy;
+            let temp = this.t[i];
+            
+            // Only hot air rises
+            if (temp > 0) {
+                // "Up" is Negative Y. 
+                // We use temperature to drive the force.
+                this.Vy[i] -= temp * this.buoyancy;
             }
         }
     }
 
-    // INTERNAL: Simulates fading
+    // UPDATED: Decay (No more hacks!)
     decay() {
         for (let i = 0; i < this.size; i++) {
-            // 1. VELOCITY DAMPING (Air Resistance)
-            // This is physically accurate. Air slows things down everywhere.
-            // Without this, the wind accelerates to infinity.
-            this.Vx[i] *= 0.98; 
-            this.Vy[i] *= 0.98;
+            // 1. Velocity Damping
+            this.Vx[i] *= 0.99; 
+            this.Vy[i] *= 0.99;
 
-            // 2. DENSITY DECAY (Subtractive vs Multiplicative)
-            let d = this.density[i];
-            
-            if (d > 0) {
-                // If we are in Fire Mode (buoyancy is active), use Subtractive Decay
-                // This eats the "tail" of the fire faster than the core.
-                if (this.buoyancy > 0) {
-                    d -= 1.5; // "Burn" 1.5 units of fuel per frame
-                    if (d < 0) d = 0;
-                } 
-                
-                // Also apply a tiny bit of multiplicative fade for smoothness
-                d *= this.cooling; 
-                
-                this.density[i] = d;
+            // 2. Density Decay (Slow fade)
+            this.density[i] *= 0.995; 
+
+            // 3. Temperature Cooling (Fast fade) <--- NEW
+            // Heat disappears much faster than smoke!
+            if (this.buoyancy > 0) {
+                 this.t[i] *= this.cooling; 
+            } else {
+                 this.t[i] = 0; // Clear heat if not in fire mode
             }
         }
     }
 }
+
+// ... (KEEP ALL THE SOLVER FUNCTIONS: IX, advect, project, diffuse, lin_solve, set_bnd) ...
+// ... (They are unchanged) ...
 
 // --- STANDARD JOS STAM SOLVER FUNCTIONS (Unchanged) ---
 // (These remain exactly the same as previous steps)
