@@ -5,34 +5,120 @@ const SOLVER_ITERATIONS = 4;
 
 let fluidSimulation;
 let renderBuffer;
+let gui;
 
 // ===== SIMULATION PARAMETERS =====
 const parameters = {
-    // Fluid physics properties
+    // Fluid physics properties (CRITICAL: These must stay very small!)
     viscosity: 0.0000001,
-    diffusion: 0.0000,
+    diffusion: 0.0,
     dyeAmount: 250,
     mouseForce: 0.5,
     
     // Fire-specific physics
     buoyancy: 0.0,
     coolingRate: 0.99,
-    turbulenceStrength: 0.5,
+    turbulenceStrength: 0.0,
+    
+    // Decay rates (Keep these high for lingering fluid!)
+    velocityDamping: 0.99,
+    densityFade: 0.995,
     
     // User interaction
     brushRadius: 3,
+    continuousInput: true,
     
     // Simulation modes
     isFireMode: false,
     
     // Visual settings
-    fluidColor: [200, 100, 255],
+    fluidColor: [200, 255, 255],
+    backgroundColor: [0, 0, 0],
+    blendMode: 'normal',
+    fadeTrails: false,
     showVelocityVectors: false,
     velocityVectorScale: 10,
+    velocityVectorDensity: 10,
+    
+    // Performance
+    simulationSpeed: 1.0,
+    
+    // Presets
+    loadPreset: function(presetName) {
+        applyPreset(presetName);
+    },
     
     // Utility functions
     resetSimulation: function() {
-        fluidSimulation = new Fluid(0.2, 0, 0.0000001);
+        fluidSimulation = new Fluid(0.2, parameters.diffusion, parameters.viscosity);
+    }
+};
+
+// Preset configurations (FIXED: Actual fluid behavior, not brush tool)
+const presets = {
+    fluid: {
+        viscosity: 0.0000001,
+        diffusion: 0.0,
+        buoyancy: 0.0,
+        coolingRate: 0.99,
+        turbulenceStrength: 0.0,
+        velocityDamping: 0.99,
+        densityFade: 0.995,
+        dyeAmount: 250,
+        mouseForce: 0.5,
+        fluidColor: [200, 255, 255],
+        isFireMode: false
+    },
+    fire: {
+        viscosity: 0.0000001,
+        diffusion: 0.0,
+        buoyancy: 0.08,
+        coolingRate: 0.90,
+        turbulenceStrength: 1.0,
+        velocityDamping: 0.99,
+        densityFade: 0.995,
+        dyeAmount: 250,
+        mouseForce: 0.5,
+        isFireMode: true
+    },
+    smoke: {
+        viscosity: 0.0000001,
+        diffusion: 0.0,
+        buoyancy: 0.03,
+        coolingRate: 0.97,
+        turbulenceStrength: 0.3,
+        velocityDamping: 0.99,
+        densityFade: 0.992,
+        dyeAmount: 300,
+        mouseForce: 0.5,
+        fluidColor: [180, 180, 180],
+        isFireMode: false
+    },
+    thick: {
+        viscosity: 0.000001,
+        diffusion: 0.0,
+        buoyancy: 0.0,
+        coolingRate: 0.99,
+        turbulenceStrength: 0.0,
+        velocityDamping: 0.97,
+        densityFade: 0.998,
+        dyeAmount: 400,
+        mouseForce: 0.3,
+        fluidColor: [100, 200, 255],
+        isFireMode: false
+    },
+    wispy: {
+        viscosity: 0.00000001,
+        diffusion: 0.00001,
+        buoyancy: 0.01,
+        coolingRate: 0.98,
+        turbulenceStrength: 0.5,
+        velocityDamping: 0.985,
+        densityFade: 0.99,
+        dyeAmount: 200,
+        mouseForce: 0.7,
+        fluidColor: [255, 200, 255],
+        isFireMode: false
     }
 };
 
@@ -48,51 +134,121 @@ function setup() {
     initializeGUI();
 }
 
-let gui; // Make GUI accessible globally for updates
-
 function initializeGUI() {
     gui = new dat.GUI();
     
+    // Presets folder
+    const presetsFolder = gui.addFolder('🎨 Presets');
+    const presetController = { preset: 'fluid' };
+    presetsFolder.add(presetController, 'preset', ['fluid', 'fire', 'smoke', 'thick', 'wispy'])
+        .name("Load Preset")
+        .onChange((value) => {
+            applyPreset(value);
+        });
+    presetsFolder.open();
+    
     // Behavior controls
-    const behaviorFolder = gui.addFolder('Behavior');
+    const behaviorFolder = gui.addFolder('⚙️ Physics (Keep values SMALL!)');
     behaviorFolder.add(parameters, 'isFireMode')
-        .name("🔥 Fire Mode")
+        .name("Fire Mode")
         .onChange(switchSimulationMode);
-    behaviorFolder.add(parameters, 'buoyancy', 0, 0.10)
-        .name("Buoyancy")
+    behaviorFolder.add(parameters, 'buoyancy', 0, 0.15)
+        .name("Buoyancy (upward force)")
         .step(0.001)
         .listen();
     behaviorFolder.add(parameters, 'coolingRate', 0.80, 1.0)
-        .name("Cooling")
-        .step(0.01)
+        .name("Cooling (0.9=fast, 0.99=slow)")
+        .step(0.001)
         .listen();
     behaviorFolder.add(parameters, 'turbulenceStrength', 0, 2.0)
-        .name("Wind/Chaos")
-        .step(0.1);
-    behaviorFolder.open();
+        .name("Turbulence")
+        .step(0.1)
+        .listen();
+    behaviorFolder.add(parameters, 'viscosity', 0, 0.000005)
+        .name("Viscosity (thickness)")
+        .step(0.0000001)
+        .listen();
+    behaviorFolder.add(parameters, 'diffusion', 0, 0.0001)
+        .name("Diffusion (spreading)")
+        .step(0.000001)
+        .listen();
+
+    // Decay controls
+    const decayFolder = gui.addFolder('⏱️ Decay (higher = lingers longer)');
+    decayFolder.add(parameters, 'velocityDamping', 0.95, 0.999)
+        .name("Velocity Damping")
+        .step(0.001);
+    decayFolder.add(parameters, 'densityFade', 0.98, 0.999)
+        .name("Density Fade")
+        .step(0.001);
 
     // Interaction controls
-    const interactionFolder = gui.addFolder('Interaction');
-    interactionFolder.add(parameters, 'dyeAmount', 100, 1000)
-        .name("Ink Amount");
-    interactionFolder.add(parameters, 'brushRadius', 1, 10)
+    const interactionFolder = gui.addFolder('🖱️ Interaction');
+    interactionFolder.add(parameters, 'dyeAmount', 50, 1000)
+        .name("Dye Amount")
+        .step(10)
+        .listen();
+    interactionFolder.add(parameters, 'brushRadius', 1, 15)
         .name("Brush Size")
         .step(1);
-    interactionFolder.add(parameters, 'mouseForce', 0.1, 3.0)
-        .name("Mouse Force");
+    interactionFolder.add(parameters, 'mouseForce', 0.1, 5.0)
+        .name("Mouse Force")
+        .step(0.1)
+        .listen();
+    interactionFolder.add(parameters, 'continuousInput')
+        .name("Continuous Input");
     interactionFolder.open();
 
     // Visual controls
-    const visualFolder = gui.addFolder('Visuals');
+    const visualFolder = gui.addFolder('🎨 Visuals');
     visualFolder.addColor(parameters, 'fluidColor')
-        .name("Fluid Color");
+        .name("Fluid Color")
+        .listen();
+    visualFolder.addColor(parameters, 'backgroundColor')
+        .name("Background");
+    visualFolder.add(parameters, 'blendMode', ['normal', 'additive', 'multiply'])
+        .name("Blend Mode");
+    visualFolder.add(parameters, 'fadeTrails')
+        .name("Fade Trails (motion blur)");
     visualFolder.add(parameters, 'showVelocityVectors')
         .name("Show Vectors");
     visualFolder.add(parameters, 'velocityVectorScale', 0, 100)
-        .name("Arrow Size")
+        .name("Vector Scale")
+        .step(1)
         .listen();
+    visualFolder.add(parameters, 'velocityVectorDensity', 5, 20)
+        .name("Vector Density")
+        .step(1);
     
-    gui.add(parameters, 'resetSimulation').name("Reset Fluid");
+    // Performance controls
+    const performanceFolder = gui.addFolder('⚡ Performance');
+    performanceFolder.add(parameters, 'simulationSpeed', 0.1, 2.0)
+        .name("Simulation Speed")
+        .step(0.1);
+    
+    gui.add(parameters, 'resetSimulation').name("🔄 Reset");
+}
+
+function applyPreset(presetName) {
+    const preset = presets[presetName];
+    if (!preset) return;
+    
+    // Apply all preset values
+    Object.keys(preset).forEach(key => {
+        if (parameters.hasOwnProperty(key)) {
+            parameters[key] = preset[key];
+        }
+    });
+    
+    // Update GUI displays
+    for (let folderName in gui.__folders) {
+        gui.__folders[folderName].__controllers.forEach(controller => {
+            controller.updateDisplay();
+        });
+    }
+    
+    // Sync to simulation
+    syncParametersToSimulation();
 }
 
 function switchSimulationMode() {
@@ -111,16 +267,21 @@ function switchSimulationMode() {
     }
     
     // Force GUI to update all controllers in all folders
-    gui.__folders.Behavior.__controllers.forEach(controller => {
-        controller.updateDisplay();
-    });
-    gui.__folders.Visuals.__controllers.forEach(controller => {
-        controller.updateDisplay();
-    });
+    for (let folderName in gui.__folders) {
+        gui.__folders[folderName].__controllers.forEach(controller => {
+            controller.updateDisplay();
+        });
+    }
 }
 
 function draw() {
-    background(0);
+    // Apply background with optional fade trails
+    if (parameters.fadeTrails) {
+        fill(parameters.backgroundColor[0], parameters.backgroundColor[1], parameters.backgroundColor[2], 10);
+        rect(0, 0, width, height);
+    } else {
+        background(parameters.backgroundColor[0], parameters.backgroundColor[1], parameters.backgroundColor[2]);
+    }
     
     syncParametersToSimulation();
     
@@ -129,7 +290,11 @@ function draw() {
     }
     
     processMouseInput();
-    fluidSimulation.step();
+    
+    // Apply simulation speed multiplier
+    for (let i = 0; i < parameters.simulationSpeed; i++) {
+        fluidSimulation.step();
+    }
     
     renderFluidDensity();
     
@@ -145,10 +310,14 @@ function syncParametersToSimulation() {
     fluidSimulation.diffusion = parameters.diffusion;
     fluidSimulation.buoyancy = parameters.buoyancy;
     fluidSimulation.coolingRate = parameters.coolingRate;
+    fluidSimulation.velocityDamping = parameters.velocityDamping;
+    fluidSimulation.densityFade = parameters.densityFade;
 }
 
 function processMouseInput() {
-    if (!mouseIsPressed) return;
+    const shouldProcess = parameters.continuousInput ? mouseIsPressed : mouseIsPressed && (movedX !== 0 || movedY !== 0);
+    
+    if (!shouldProcess) return;
     
     const gridX = floor(mouseX / CELL_SCALE);
     const gridY = floor(mouseY / CELL_SCALE);
@@ -163,10 +332,13 @@ function processMouseInput() {
             // Check grid bounds and circular shape
             const isInsideGrid = cellX > 0 && cellX < GRID_SIZE - 1 && 
                                 cellY > 0 && cellY < GRID_SIZE - 1;
-            const isInsideCircle = offsetX * offsetX + offsetY * offsetY <= radius * radius;
+            const distanceSquared = offsetX * offsetX + offsetY * offsetY;
+            const isInsideCircle = distanceSquared <= radius * radius;
             
             if (isInsideGrid && isInsideCircle) {
-                const intensityVariation = random(0.5, 1.5);
+                // Softer falloff from center
+                const falloff = 1.0 - (Math.sqrt(distanceSquared) / radius);
+                const intensityVariation = random(0.7, 1.3) * falloff;
                 
                 // Add visual dye/smoke
                 fluidSimulation.addDensity(
@@ -175,7 +347,7 @@ function processMouseInput() {
                     parameters.dyeAmount * intensityVariation
                 );
                 
-                // Add heat (only in fire mode)
+                // Add heat (only when buoyancy is active)
                 if (parameters.buoyancy > 0) {
                     fluidSimulation.addTemperature(
                         cellX, 
@@ -188,10 +360,10 @@ function processMouseInput() {
                 const velocityX = movedX * parameters.mouseForce;
                 const velocityY = movedY * parameters.mouseForce;
                 
-                // Add upward push for fire
+                // Add upward push for fire/buoyancy
                 if (parameters.buoyancy > 0) {
-                    const horizontalWiggle = random(-1, 1);
-                    fluidSimulation.addVelocity(cellX, cellY, horizontalWiggle, -1);
+                    const horizontalWiggle = random(-0.5, 0.5);
+                    fluidSimulation.addVelocity(cellX, cellY, horizontalWiggle, -0.8);
                 }
                 
                 fluidSimulation.addVelocity(cellX, cellY, velocityX, velocityY);
@@ -238,16 +410,16 @@ function renderFluidDensity() {
                         // White-hot core
                         red = 255;
                         green = 255;
-                        blue = (densityValue - 200) * 5;
+                        blue = constrain((densityValue - 200) * 5, 0, 255);
                     } else if (densityValue > 100) {
                         // Yellow-orange flames
                         red = 255;
-                        green = (densityValue - 100) * 2.5;
+                        green = constrain((densityValue - 100) * 2.5, 0, 255);
                         blue = 0;
                     } else {
                         // Red embers
-                        red = densityValue * 2.5;
-                        green = densityValue * 0.5;
+                        red = constrain(densityValue * 2.5, 0, 255);
+                        green = constrain(densityValue * 0.5, 0, 255);
                         blue = 0;
                     }
                     
@@ -270,11 +442,20 @@ function renderFluidDensity() {
     }
     
     renderBuffer.updatePixels();
+    
+    // Apply blend mode
+    push();
+    if (parameters.blendMode === 'additive') {
+        blendMode(ADD);
+    } else if (parameters.blendMode === 'multiply') {
+        blendMode(MULTIPLY);
+    }
     image(renderBuffer, 0, 0, width, height);
+    pop();
 }
 
 function renderVelocityField() {
-    const samplingStep = 10;
+    const samplingStep = parameters.velocityVectorDensity;
     
     stroke(255, 150);
     strokeWeight(1);
